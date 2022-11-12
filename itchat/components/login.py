@@ -3,6 +3,7 @@ import threading
 import json, xml.dom.minidom
 import random
 import traceback, logging
+from isort import stream
 try:
     from httplib import BadStatusLine
 except ImportError:
@@ -36,20 +37,20 @@ def login(self, enableCmdQR=False, picDir=None, qrCallback=None,
         logger.warning('itchat has already logged in.')
         return
     self.isLogging = True
+    retryTimes = 0
     while self.isLogging:
-        uuid = push_login(self)
-        if uuid:
-            qrStorage = io.BytesIO()
-        else:
-            logger.info('Getting uuid of QR code.')
-            while not self.get_QRuuid():
-                time.sleep(1)
-            logger.info('Downloading QR code.')
-            qrStorage = self.get_QR(enableCmdQR=enableCmdQR,
-                picDir=picDir, qrCallback=qrCallback)
-            logger.info('Please scan the QR code to log in.')
+        uuid = self.get_QRuuid()
+        if not uuid:
+            logger.info('get uuid failure')
+            return
+        logger.info('Downloading QR code.')
+        qrStorage = self.get_QR(enableCmdQR=enableCmdQR, picDir=picDir, qrCallback=qrCallback)
+        logger.info('Please scan the QR code to log in.')
         isLoggedIn = False
+        retryLogin = 0
         while not isLoggedIn:
+            time.sleep(5)
+            retryLogin += 1
             status = self.check_login()
             if hasattr(qrCallback, '__call__'):
                 qrCallback(uuid=self.uuid, status=status, qrcode=qrStorage.getvalue())
@@ -59,14 +60,17 @@ def login(self, enableCmdQR=False, picDir=None, qrCallback=None,
                 if isLoggedIn is not None:
                     logger.info('Please press confirm on your phone.')
                     isLoggedIn = None
-            elif status != '408':
+            if retryLogin == 3:
                 break
         if isLoggedIn:
             break
         elif self.isLogging:
-            logger.info('Log in time out, reloading QR code.')
+            retryTimes += 1
+            logger.info('Log in time out, reloading %s QR code.' % (retryTimes))
+            if retryTimes == 3:
+                break
     else:
-        return # log in process is stopped by user
+        return  # log in process is stopped by user
     logger.info('Loading the contact, this may take a little while.')
     self.web_init()
     self.show_mobile_login()
@@ -110,15 +114,18 @@ def get_QR(self, uuid=None, enableCmdQR=False, picDir=None, qrCallback=None):
     uuid = uuid or self.uuid
     picDir = picDir or config.DEFAULT_QR
     qrStorage = io.BytesIO()
-    qrCode = QRCode('https://login.weixin.qq.com/l/' + uuid)
-    qrCode.png(qrStorage, scale=10)
+    qrCodeRes = self.s.get('https://login.weixin.qq.com/qrcode/' + uuid, stream=True)
+    qrStorage.write(qrCodeRes.content)
+    # qrCode = QRCode(qrCodeRes.content)
+    # qrCode.png(qrStorage, scale=10)
     if hasattr(qrCallback, '__call__'):
         qrCallback(uuid=uuid, status='0', qrcode=qrStorage.getvalue())
     else:
         with open(picDir, 'wb') as f:
             f.write(qrStorage.getvalue())
         if enableCmdQR:
-            utils.print_cmd_qr(qrCode.text(1), enableCmdQR=enableCmdQR)
+            # utils.print_cmd_qr(qrCode.text(1), enableCmdQR=enableCmdQR)
+            logger.info('not support cmd QR')
         else:
             utils.print_qr(picDir)
     return qrStorage
@@ -127,14 +134,19 @@ def check_login(self, uuid=None):
     uuid = uuid or self.uuid
     url = '%s/cgi-bin/mmwebwx-bin/login' % config.BASE_URL
     localTime = int(time.time())
-    params = 'loginicon=true&uuid=%s&tip=1&r=%s&_=%s' % (
-        uuid, int(-localTime / 1579), localTime)
-    headers = { 'User-Agent' : config.USER_AGENT }
-    r = self.s.get(url, params=params, headers=headers)
+    params = {
+        'loginicon': 'true',
+        'uuid': uuid,
+        'tip': 0,
+        'r': int(-localTime / 1579),
+        '_': localTime
+    }
+    headers = { 'User-Agent' : config.USER_AGENT}
+    res = self.s.get(url, params=params, headers=headers)
     regx = r'window.code=(\d+)'
-    data = re.search(regx, r.text)
+    data = re.search(regx, res.text)
     if data and data.group(1) == '200':
-        if process_login_info(self, r.text):
+        if process_login_info(self, res.text):
             return '200'
         else:
             return '400'
@@ -151,8 +163,15 @@ def process_login_info(core, loginContent):
     '''
     regx = r'window.redirect_uri="(\S+)";'
     core.loginInfo['url'] = re.search(regx, loginContent).group(1)
-    headers = { 'User-Agent' : config.USER_AGENT }
-    r = core.s.get(core.loginInfo['url'], headers=headers, allow_redirects=False)
+    param = {
+        'fun':'new',
+        'version':'v2',
+        'mod': 'desktop'
+    }
+    r = core.s.get(core.loginInfo['url'], headers=config.LOGIN_HEADERS, params=param, allow_redirects=False)
+    print(r.request)
+    print(r.request.headers)
+    print(r.request.body)
     core.loginInfo['url'] = core.loginInfo['url'][:core.loginInfo['url'].rfind('/')]
     for indexUrl, detailedUrl in (
             ("wx2.qq.com"      , ("file.wx2.qq.com", "webpush.wx2.qq.com")),
