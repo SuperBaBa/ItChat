@@ -173,16 +173,10 @@ def process_login_info(core, loginContent):
     print(r.request.headers)
     print(r.request.body)
     core.loginInfo['url'] = core.loginInfo['url'][:core.loginInfo['url'].rfind('/')]
-    for indexUrl, detailedUrl in (
-            ("wx2.qq.com"      , ("file.wx2.qq.com", "webpush.wx2.qq.com")),
-            ("wx8.qq.com"      , ("file.wx8.qq.com", "webpush.wx8.qq.com")),
-            ("qq.com"          , ("file.wx.qq.com", "webpush.wx.qq.com")),
-            ("web2.wechat.com" , ("file.web2.wechat.com", "webpush.web2.wechat.com")),
-            ("wechat.com"      , ("file.web.wechat.com", "webpush.web.wechat.com"))):
+    for indexUrl, detailedUrl in config.DOAMIN_MAPPING:
         fileUrl, syncUrl = ['https://%s/cgi-bin/mmwebwx-bin' % url for url in detailedUrl]
         if indexUrl in core.loginInfo['url']:
-            core.loginInfo['fileUrl'], core.loginInfo['syncUrl'] = \
-                fileUrl, syncUrl
+            core.loginInfo['fileUrl'], core.loginInfo['syncUrl'] = fileUrl, syncUrl
             break
     else:
         core.loginInfo['fileUrl'] = core.loginInfo['syncUrl'] = core.loginInfo['url']
@@ -205,7 +199,7 @@ def process_login_info(core, loginContent):
     return True
 
 def web_init(self):
-    url = '%s/webwxinit' % self.loginInfo['url']
+    url = f"{self.loginInfo['url']}/webwxinit"
     params = {
         'r': int(-time.time() / 1579),
         'pass_ticket': self.loginInfo['pass_ticket'], }
@@ -221,8 +215,8 @@ def web_init(self):
     self.loginInfo['User'] = wrap_user_dict(utils.struct_friend_info(dic['User']))
     self.memberList.append(self.loginInfo['User'])
     self.loginInfo['SyncKey'] = dic['SyncKey']
-    self.loginInfo['synckey'] = '|'.join(['%s_%s' % (item['Key'], item['Val'])
-        for item in dic['SyncKey']['List']])
+    self.loginInfo['synckey'] = '|'.join([f"{item['Key']}_{item['Val']}" for item in dic['SyncKey']['List']])
+
     self.storageClass.userName = dic['User']['UserName']
     self.storageClass.nickName = dic['User']['NickName']
     # deal with contact list returned when init
@@ -244,17 +238,19 @@ def web_init(self):
     return dic
 
 def show_mobile_login(self):
-    url = '%s/webwxstatusnotify?lang=zh_CN&pass_ticket=%s' % (
-        self.loginInfo['url'], self.loginInfo['pass_ticket'])
+    url = f"{self.loginInfo['url']}/webwxstatusnotify?lang=zh_CN&pass_ticket={self.loginInfo['pass_ticket']}"
+
     data = {
-        'BaseRequest'  : self.loginInfo['BaseRequest'],
-        'Code'         : 3,
-        'FromUserName' : self.storageClass.userName,
-        'ToUserName'   : self.storageClass.userName,
-        'ClientMsgId'  : int(time.time()), }
+        'BaseRequest': self.loginInfo['BaseRequest'],
+        'Code': 3,
+        'FromUserName': self.storageClass.userName,
+        'ToUserName': self.storageClass.userName,
+        'ClientMsgId': int(time.time()),
+    }
     headers = {
         'ContentType': 'application/json; charset=UTF-8',
-        'User-Agent' : config.USER_AGENT, }
+        'User-Agent': config.USER_AGENT,
+    }
     r = self.s.post(url, data=json.dumps(data), headers=headers)
     return ReturnValue(rawResponse=r)
 
@@ -309,16 +305,17 @@ def start_receiving(self, exitCallback=None, getReceivingFnOnly=False):
         maintainThread.start()
 
 def sync_check(self):
-    url = '%s/synccheck' % self.loginInfo.get('syncUrl', self.loginInfo['url'])
+    url = f"{self.loginInfo.get('syncUrl', self.loginInfo['url'])}/synccheck"
     params = {
-        'r'        : int(time.time() * 1000),
-        'skey'     : self.loginInfo['skey'],
-        'sid'      : self.loginInfo['wxsid'],
-        'uin'      : self.loginInfo['wxuin'],
-        'deviceid' : self.loginInfo['deviceid'],
-        'synckey'  : self.loginInfo['synckey'],
-        '_'        : self.loginInfo['logintime'], }
-    headers = { 'User-Agent' : config.USER_AGENT }
+        'r': int(time.time() * 1000),
+        'skey': self.loginInfo['skey'],
+        'sid': self.loginInfo['wxsid'],
+        'uin': self.loginInfo['wxuin'],
+        'deviceid': self.loginInfo['deviceid'],
+        'synckey': self.loginInfo['synckey'],
+        '_': self.loginInfo['logintime'],
+    }
+    headers = {'User-Agent': config.USER_AGENT}
     self.loginInfo['logintime'] += 1
     try:
         r = self.s.get(url, params=params, headers=headers, timeout=config.TIMEOUT)
@@ -342,9 +339,8 @@ def sync_check(self):
     return pm.group(2)
 
 def get_msg(self):
-    url = '%s/webwxsync?sid=%s&skey=%s&pass_ticket=%s' % (
-        self.loginInfo['url'], self.loginInfo['wxsid'],
-        self.loginInfo['skey'],self.loginInfo['pass_ticket'])
+    url = f"{self.loginInfo['url']}/webwxsync?sid={self.loginInfo['wxsid']}&skey={self.loginInfo['skey']}&pass_ticket={self.loginInfo['pass_ticket']}"
+
     data = {
         'BaseRequest' : self.loginInfo['BaseRequest'],
         'SyncKey'     : self.loginInfo['SyncKey'],
@@ -356,8 +352,7 @@ def get_msg(self):
     dic = json.loads(r.content.decode('utf-8', 'replace'))
     if dic['BaseResponse']['Ret'] != 0: return None, None
     self.loginInfo['SyncKey'] = dic['SyncKey']
-    self.loginInfo['synckey'] = '|'.join(['%s_%s' % (item['Key'], item['Val'])
-        for item in dic['SyncCheckKey']['List']])
+    self.loginInfo['synckey'] = '|'.join([f"{item['Key']}_{item['Val']}" for item in dic['SyncCheckKey']['List']])
     return dic['AddMsgList'], dic['ModContactList']
 
 def logout(self):
